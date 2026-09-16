@@ -3,6 +3,9 @@ name: Build OpenWrt for ROCEOS K50S
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   REPO_URL: https://github.com/openwrt/openwrt
   REPO_BRANCH: openwrt-24.10
@@ -63,6 +66,31 @@ jobs:
           cd openwrt
           make download -j$(nproc)
           find dl -size -1024c -exec rm -f {} \;
+
+      - name: Inject ROCEOS K50S DTS to Kernel
+        run: |
+          cd openwrt
+          # 1. 触发工具链构建和内核源码解压
+          make target/linux/prepare -j$(nproc) || true
+
+          # 2. 定位解压出的内核 rockchip DTS 目录并注入设备树
+          KERNEL_DTS_DIR=$(find build_dir/target-*generic_musl/linux-rockchip_armv8/ -type d -path "*/arch/arm64/boot/dts/rockchip" 2>/dev/null | head -n 1)
+
+          if [ -n "$KERNEL_DTS_DIR" ] && [ -d "$KERNEL_DTS_DIR" ]; then
+            echo "Found target kernel directory at: $KERNEL_DTS_DIR"
+            cp -vf ../patches/rk3568-roc-k50s.dts "$KERNEL_DTS_DIR/"
+            cp -vf ../patches/rk3568-roc-k50s.dtsi "$KERNEL_DTS_DIR/"
+          else
+            echo "Kernel dir not yet ready, falling back to target files directory"
+            mkdir -p target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/
+            cp -vf ../patches/rk3568-roc-k50s.dts target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/
+            cp -vf ../patches/rk3568-roc-k50s.dtsi target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/
+          fi
+
+          # 3. 兜底注入 target/linux/rockchip/dts（新版 target 优先检索位置）
+          mkdir -p target/linux/rockchip/dts/
+          cp -vf ../patches/rk3568-roc-k50s.dts target/linux/rockchip/dts/
+          cp -vf ../patches/rk3568-roc-k50s.dtsi target/linux/rockchip/dts/
 
       - name: Compile Firmware
         run: |
