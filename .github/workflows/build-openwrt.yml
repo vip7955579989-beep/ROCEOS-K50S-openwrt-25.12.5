@@ -1,11 +1,11 @@
-name: Build OpenWrt 25.12.5 for ROCEOS K50S
+name: Build OpenWrt for ROCEOS K50S
 
 on:
   workflow_dispatch:
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: v25.12.5
+  REPO_BRANCH: openwrt-24.10
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
@@ -23,17 +23,15 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
           sudo -E apt-get -qq update
-          sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          sudo -E apt-get -qq install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-            git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-            libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
-            mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply \
-            python3-docutils qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl \
+            git gperf haveged help2man intltool libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libreadline-dev libssl-dev libtool lrzsz \
+            nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply \
+            python3-docutils rsync scons squashfs-tools swig texinfo uglifyjs upx-ucl \
             unzip vim wget xmlto xxd zlib1g-dev python3-pyelftools
-          sudo -E apt-get -qq autoremove --purge
-          sudo -E apt-get -qq clean
           sudo timedatectl set-timezone Asia/Shanghai
 
       - name: Clone OpenWrt Source
@@ -42,9 +40,7 @@ jobs:
 
       - name: Load DIY Script 1
         run: |
-          chmod +x $DIY_P1_SH
-          cd openwrt
-          $GITHUB_WORKSPACE/$DIY_P1_SH
+          [ -e $DIY_P1_SH ] && chmod +x $DIY_P1_SH && cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
       - name: Update & Install Feeds
         run: |
@@ -54,9 +50,7 @@ jobs:
 
       - name: Load DIY Script 2
         run: |
-          chmod +x $DIY_P2_SH
-          cd openwrt
-          $GITHUB_WORKSPACE/$DIY_P2_SH
+          [ -e $DIY_P2_SH ] && chmod +x $DIY_P2_SH && cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
       - name: Load Custom Config
         run: |
@@ -76,10 +70,6 @@ jobs:
           echo -e "$(nproc) thread compile"
           make -j$(nproc) || make -j1 V=s
 
-      - name: Check Space Usage
-        if: (!cancelled())
-        run: df -hT
-
       - name: Organize Files
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
@@ -95,5 +85,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: OpenWrt-25.12.5-K50S-${{ github.run_number }}
+          tag_name: OpenWrt-K50S-${{ github.run_number }}
           files: ${{ env.FIRMWARE }}/*roceos_k50s*
