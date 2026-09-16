@@ -1,0 +1,1 @@
+# ROCEOS-K50S-openwrt-25.12.5
