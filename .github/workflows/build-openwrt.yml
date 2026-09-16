@@ -1,4 +1,4 @@
-name: Build OpenWrt for ROCEOS K50S
+name: Build OpenWrt 24.10 for ROCEOS K50S
 
 on:
   workflow_dispatch:
@@ -14,104 +14,119 @@ env:
   DIY_P2_SH: diy-part2.sh
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Initialization Environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install -y \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-            git gperf haveged help2man intltool libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-            libmpc-dev libmpfr-dev libncurses-dev libreadline-dev libssl-dev libtool lrzsz \
-            nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply \
-            python3-docutils rsync scons squashfs-tools swig texinfo uglifyjs upx-ucl \
-            unzip vim wget xmlto xxd zlib1g-dev python3-pyelftools
-          sudo timedatectl set-timezone Asia/Shanghai
+    - name: Initialization Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install -y \
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses-dev libreadline-dev libssl-dev libtool lrzsz \
+          nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply \
+          python3-docutils rsync scons squashfs-tools swig texinfo uglifyjs upx-ucl \
+          unzip vim wget xmlto xxd zlib1g-dev python3-pyelftools
+        sudo timedatectl set-timezone "$TZ"
 
-      - name: Clone OpenWrt Source
-        run: |
-          git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
+    - name: Clone OpenWrt Source
+      run: |
+        git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
 
-      - name: Load DIY Script 1
-        run: |
-          [ -e $DIY_P1_SH ] && chmod +x $DIY_P1_SH && cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
+    - name: Load DIY Script 1
+      run: |
+        [ -e $DIY_P1_SH ] && chmod +x $DIY_P1_SH && cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: Update & Install Feeds
-        run: |
-          cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+    - name: Update & Install Feeds
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-      - name: Load DIY Script 2
-        run: |
-          [ -e $DIY_P2_SH ] && chmod +x $DIY_P2_SH && cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
+    - name: Load DIY Script 2
+      run: |
+        [ -e $DIY_P2_SH ] && chmod +x $DIY_P2_SH && cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: Load Custom Config
-        run: |
-          [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
-          cd openwrt
-          make defconfig
+    - name: Load Custom Config
+      run: |
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        cd openwrt
+        make defconfig
 
-      - name: Download Packages
-        run: |
-          cd openwrt
-          make download -j$(nproc)
-          find dl -size -1024c -exec rm -f {} \;
+    - name: Download Packages
+      run: |
+        cd openwrt
+        make download -j$(nproc)
+        find dl -size -1024c -exec rm -f {} \;
 
-      - name: Inject ROCEOS K50S DTS to Kernel
-        run: |
-          cd openwrt
-          # 1. 触发工具链构建和内核源码解压
-          make target/linux/prepare -j$(nproc) || true
+    - name: Inject ROCEOS K50S DTS to Kernel
+      run: |
+        cd openwrt
+        # 1. 预先解压内核源码
+        make target/linux/prepare -j$(nproc) || true
 
-          # 2. 定位解压出的内核 rockchip DTS 目录并注入设备树
-          KERNEL_DTS_DIR=$(find build_dir/target-*generic_musl/linux-rockchip_armv8/ -type d -path "*/arch/arm64/boot/dts/rockchip" 2>/dev/null | head -n 1)
-
-          if [ -n "$KERNEL_DTS_DIR" ] && [ -d "$KERNEL_DTS_DIR" ]; then
-            echo "Found target kernel directory at: $KERNEL_DTS_DIR"
-            cp -vf ../patches/rk3568-roc-k50s.dts "$KERNEL_DTS_DIR/"
-            cp -vf ../patches/rk3568-roc-k50s.dtsi "$KERNEL_DTS_DIR/"
-          else
-            echo "Kernel dir not yet ready, falling back to target files directory"
-            mkdir -p target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/
-            cp -vf ../patches/rk3568-roc-k50s.dts target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/
-            cp -vf ../patches/rk3568-roc-k50s.dtsi target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/
+        # 2. 定位内核 DTS 目录，注入文件并向 Makefile 追加规则
+        for kdir in build_dir/target-*generic_musl/linux-rockchip_armv8/linux-*; do
+          if [ -d "$kdir/arch/arm64/boot/dts/rockchip" ]; then
+            echo "Injecting DTS to: $kdir"
+            cp -vf $GITHUB_WORKSPACE/patches/rk3568-roc-k50s.* "$kdir/arch/arm64/boot/dts/rockchip/"
+            if ! grep -q "rk3568-roc-k50s.dtb" "$kdir/arch/arm64/boot/dts/rockchip/Makefile"; then
+              echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3568-roc-k50s.dtb' >> "$kdir/arch/arm64/boot/dts/rockchip/Makefile"
+              echo "Registered rk3568-roc-k50s.dtb to $kdir/arch/arm64/boot/dts/rockchip/Makefile"
+            fi
           fi
+        done
 
-          # 3. 兜底注入 target/linux/rockchip/dts（新版 target 优先检索位置）
-          mkdir -p target/linux/rockchip/dts/
-          cp -vf ../patches/rk3568-roc-k50s.dts target/linux/rockchip/dts/
-          cp -vf ../patches/rk3568-roc-k50s.dtsi target/linux/rockchip/dts/
+        # 3. 注入 target files 目录作为双重保险
+        mkdir -p target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/
+        cp -vf $GITHUB_WORKSPACE/patches/rk3568-roc-k50s.* target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/ 2>/dev/null || true
+        mkdir -p target/linux/rockchip/dts/
+        cp -vf $GITHUB_WORKSPACE/patches/rk3568-roc-k50s.* target/linux/rockchip/dts/ 2>/dev/null || true
 
-      - name: Compile Firmware
-        run: |
-          cd openwrt
-          echo -e "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 V=s
+    - name: Compile Firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || {
+          echo "Build failed or dtb missing, manually checking and compiling DTB via DTC..."
+          for kdir in build_dir/target-*generic_musl/linux-rockchip_armv8/linux-*; do
+            if [ -d "$kdir/arch/arm64/boot/dts/rockchip" ]; then
+              DTS_SRC="$kdir/arch/arm64/boot/dts/rockchip/rk3568-roc-k50s.dts"
+              DTB_DST="$kdir/arch/arm64/boot/dts/rockchip/rk3568-roc-k50s.dtb"
+              if [ -f "$DTS_SRC" ] && [ ! -f "$DTB_DST" ]; then
+                scripts/dtc/dtc -I dts -O dtb -o "$DTB_DST" "$DTS_SRC" || true
+              fi
+            fi
+          done
+          make -j1 V=s
+        }
+        echo "STATUS=success" >> $GITHUB_OUTPUT
 
-      - name: Organize Files
-        id: organize
-        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-        run: |
-          cd openwrt/bin/targets/rockchip/armv8
-          rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-          echo "STATUS=success" >> $GITHUB_OUTPUT
+    - name: Organize Files
+      id: organize
+      if: steps.compile.outputs.STATUS == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/rockchip/armv8
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "STATUS=success" >> $GITHUB_OUTPUT
 
-      - name: Upload Firmware to Release
-        uses: softprops/action-gh-release@v2
-        if: steps.organize.outputs.STATUS == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: OpenWrt-K50S-${{ github.run_number }}
-          files: ${{ env.FIRMWARE }}/*roceos_k50s*
+    - name: Upload Firmware to Release
+      uses: softprops/action-gh-release@v2
+      if: steps.organize.outputs.STATUS == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: OpenWrt-24.10-K50S-${{ github.run_number }}
+        files: ${{ env.FIRMWARE }}/*roceos_k50s*
